@@ -1,4 +1,5 @@
 #!/usr/bin/perl
+# USAGE: perl C60toC30.pl C60file.bas
 
 use strict;
 use warnings;
