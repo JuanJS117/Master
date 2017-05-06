@@ -20,9 +20,9 @@ static const double VOLBOX = 400.0;           // Box volume --> If working with 
 //static const int NP = 500;                  // Number of particles --> Always set NP = 500, in order to reach a density of 0.5 with LBOX = 10*SIGMA
 static const int NP = 200;                    // Number of particles --> Always set NP = 200, in order to reach a density of 0.5 with LBOX = 7.36*SIGMA
 static const double T = 2.0;                  // Temperature --> To be reached by Langevin thermostat (This value ensures a T = 2.0)
-static const double dt = 0.003;               // Time step (fs)
-static const double NSTEP = 10000.0;           // Number of steps --> For a simulation of 1 ps, use NSTEP = 1000000
-static const double NSAMP = 1000.0;            // Number of steps after which we store an image of the system --> Usually NSAMP = NSTEP/100
+static const double dt = 0.001;               // Time step (fs)
+static const double NSTEP = 100000.0;           // Number of steps --> For a simulation of 1 ps, use NSTEP = 1000000
+static const double NSAMP = 10000.0;            // Number of steps after which we store an image of the system --> Usually NSAMP = NSTEP/100
 static const double CUTOFF = 1.0*2.5;         // Lennard-Jones potential cutoff --> Always set it to be 2.5*SIGMA
 static const double UCUT = -0.01631689;       // Lennard-Jones potential at the cutoff distance --> Needed for truncated Lennard-Jones potential
 static const double FCUT = -0.01559979;       // Lennard-Jones force at the cutoff distance --> Needed for truncated Lennard-Jones force
@@ -44,6 +44,7 @@ double get_force( double pos[NP][3], int i );                                   
 double apply_pbc( double r );                                                   // Apply Periodic Boundary Conditions to a point in space
 void save_trajectory( double pos[NP][3], double vel[NP][3], double force[NP][3], double ener, double temp, double P, char filename[20] );   // Save trajectory in file
 double randn();                                                                 // Subroutine to obtain normally distributed random numbers between -1 and 1
+double dot_product( double pos1[3], double pos2[3] );                           // Subroutine intended to get the scalar product between two 3D vectors
 
 
 /* -------------------------------------------------------------------------- */
@@ -56,6 +57,8 @@ void main()
 
   double pos[NP][3];
   double vel[NP][3];
+  double vel0[NP][3];
+  double force0[NP][3];
   double v_half[NP][3];
   double force[NP][3];
   double force_next[NP][3];
@@ -64,6 +67,11 @@ void main()
   double MomX, MomY, MomZ;
   double Temp;
   double P;
+  double C_i[(int)NSAMP];   // VAC (Velocity Autocorrelation function)
+  double Diff_coef = 0.0;   // Diffussion coefficient
+  double FAC[(int)NSAMP];   // FAC (Force Autocorrelation funtion)
+  double Fric_coef = 0.0;   // Friction coefficient
+  int count = 0;            // To calculate integrals derived from VAC
 
   srandom(time(NULL));
   // srandom(123456);
@@ -74,40 +82,40 @@ void main()
   // 1.1 --> Initialize positions
 
 
-  // // (OPTION 1) Initial positions are extracted from file (MonteCarlo equilibrium configuration at desired T)
-  // FILE *ifp;
-  // ifp = fopen("initial.txt","r");
-  // double x,y,z;
-  // int count = 0;
-  // while (fscanf(ifp, "%lf\t%lf\t%lf", &x, &y, &z) == 3){
-  //   pos[count][0] = x;
-  //   pos[count][1] = y;
-  //   pos[count][2] = z;
-  //   count = count + 1;
-  //   // printf("%lf\t%lf\t%lf\n",x,y,z);
-  // }
-  // fclose(ifp);
-
-  // (OPTION 2) Initialize equally-spaced lattice of particles
-  double np_side = floor(pow(NP,(1.0/3.0)) + 1.0);
-  int np_count = 0;
-  //printf("%f\n",np_side);
-  //printf("The %i particles will be placed at the following coordinates:\n\n",NP);
-  for (int x = 0; x < np_side; x++){
-    for (int y = 0; y < np_side; y++){
-      for (int z = 0; z < np_side; z++){
-        if (np_count < NP){
-          pos[np_count][0] = -(LBOX/2.0) + (x+0.5)*(LBOX/(np_side));
-          pos[np_count][1] = -(LBOX/2.0) + (y+0.5)*(LBOX/(np_side));
-          pos[np_count][2] = -(LBOX/2.0) + (z+0.5)*(LBOX/(np_side));
-          //printf("\t%f\t%f\t%f\n",pos[np_count][0],pos[np_count][1],pos[np_count][2]);
-          np_count = np_count + 1;
-        } else {
-          break;
-        }
-      }
-    }
+  // (OPTION 1) Initial positions are extracted from file (MonteCarlo equilibrium configuration at desired T)
+  FILE *ifp;
+  ifp = fopen("initial.txt","r");
+  double x,y,z;
+  int count1 = 0;
+  while (fscanf(ifp, "%lf\t%lf\t%lf", &x, &y, &z) == 3){
+    pos[count1][0] = x;
+    pos[count1][1] = y;
+    pos[count1][2] = z;
+    count1 = count1 + 1;
+    // printf("%lf\t%lf\t%lf\n",x,y,z);
   }
+  fclose(ifp);
+
+  // // (OPTION 2) Initialize equally-spaced lattice of particles
+  // double np_side = floor(pow(NP,(1.0/3.0)) + 1.0);
+  // int np_count = 0;
+  // //printf("%f\n",np_side);
+  // //printf("The %i particles will be placed at the following coordinates:\n\n",NP);
+  // for (int x = 0; x < np_side; x++){
+  //   for (int y = 0; y < np_side; y++){
+  //     for (int z = 0; z < np_side; z++){
+  //       if (np_count < NP){
+  //         pos[np_count][0] = -(LBOX/2.0) + (x+0.5)*(LBOX/(np_side));
+  //         pos[np_count][1] = -(LBOX/2.0) + (y+0.5)*(LBOX/(np_side));
+  //         pos[np_count][2] = -(LBOX/2.0) + (z+0.5)*(LBOX/(np_side));
+  //         //printf("\t%f\t%f\t%f\n",pos[np_count][0],pos[np_count][1],pos[np_count][2]);
+  //         np_count = np_count + 1;
+  //       } else {
+  //         break;
+  //       }
+  //     }
+  //   }
+  // }
 
 
   // 1.2 --> Initialize velocities
@@ -115,7 +123,8 @@ void main()
   // printf("\nVELOCITIES:\n");
   for (int i = 0; i < NP; i++){
     for (int dim = 0; dim < 3; dim++){
-      vel[i][dim] = sqrt(T/5.0)*randn();
+      vel[i][dim] = sqrt(T)*randn();
+      vel0[i][dim] = vel[i][dim];
       v_half[i][dim] = 0.0;
     }
     // printf("%lf\t%lf\t%lf\n",vel[i][0],vel[i][1],vel[i][2]); // Works fine, uncomment to check
@@ -146,10 +155,16 @@ void main()
     }
   }
 
+  for (int i = 0; i < NP; i++){ // For the Force Autocorrelation Coefficient
+    force0[i][0] = force[i][0];
+    force0[i][1] = force[i][1];
+    force0[i][2] = force[i][2];
+  }
+
 
   /* 2 --> MOLECULAR DYNAMICS SIMULATION */
 
-  printf("Simulation_Percentage\tIteration\tTime\tTotEn\tPotEn\tKinEn\tTemperature\tMomentumX\tMomentumY\tMomentumZ\n");
+  printf("Simulation_Percentage\tIteration\tTime\tTotEn\tPotEn\tKinEn\tTemperature\tPressure\tMomentumX\tMomentumY\tMomentumZ\tVAC\tDiffusion_coef\tFriction_coef\n");
 
   for (int iter = 0; iter < NSTEP; iter++){
 
@@ -212,7 +227,10 @@ void main()
       MomZ = 0.0;
 
       Temp = 0.0;
-      //P = 0.0;
+      P = 0.0;
+
+      C_i[count] = 0.0;
+      FAC[count] = 0.0;
 
       for (int i = 0; i < NP; i++){
         KinEn = KinEn + 0.5*(vel[i][0]*vel[i][0] + vel[i][1]*vel[i][1] + vel[i][2]*vel[i][2] );
@@ -223,6 +241,10 @@ void main()
 
         Temp = Temp + (vel[i][0]*vel[i][0] + vel[i][1]*vel[i][1] + vel[i][2]*vel[i][2] );
         //P = P - (1.0/3.0)*norm(pos[i])*norm(force[i]);
+        P = P - (1.0/3.0)*dot_product(pos[i],force[i]);
+
+        C_i[count] = C_i[count] + dot_product(vel0[i],vel[i]); // VAC
+        FAC[count] = FAC[count] + dot_product(force0[i],force[i]); // Force AutoCorrelation Coefficient
 
         for (int j = 0; j < NP; j++){
           if (i != j){
@@ -237,11 +259,18 @@ void main()
       KinEn = KinEn/NP;
       TotEn = TotEn + PotEn + KinEn;
 
-      Temp = Temp/NP;
-      //P = P + Temp*NP;
-      //P = P / VOLBOX;
+      Temp = Temp/(3.0*NP);
+      P = P + Temp*NP;
+      P = P / VOLBOX;
+      C_i[count] = C_i[count] / NP;
+      FAC[count] = FAC[count] / (NP*Temp);
 
-      printf("%.2lf%%\t%i\t%lf\t%lf\t%lf\t%lf\t%lf\t%.14lf\t%.14lf\t%.14lf\n",(iter/NSTEP)*100.0,iter,dt*(double)iter,TotEn,PotEn,KinEn,Temp,MomX,MomY,MomZ);
+      // Diffusion coefficient
+      Diff_coef = Diff_coef + (1.0/3.0)*C_i[count]*dt;
+      // Friction coefficient
+      Fric_coef = Fric_coef + (1.0/3.0)*FAC[count]*dt;
+
+      printf("%.2lf%%\t%i\t%lf\t%lf\t%lf\t%lf\t%lf\t%f\t%.14lf\t%.14lf\t%.14lf\t%f\t%f\t%f\n",(iter/NSTEP)*100.0,iter,dt*(double)iter,TotEn,PotEn,KinEn,Temp,P,MomX,MomY,MomZ,C_i[count],Diff_coef,Fric_coef);
 
       // Uncomment code below only if a verbose output is desired
       // printf("Simulation status: %f %%\t...\t%1.12f fs\n", (100.0*iter/NSTEP),dt*iter);
@@ -251,10 +280,12 @@ void main()
       // printf("\t\t\tTemperature: %f\tPressure: %f\n",Temp,P);
       // printf("\n--------------------------------------------------------\n");
 
-      char filename[20];
+      /*char filename[20];
       sprintf(filename, "%d", iter);
       strcat(filename,"_traj.dat");
-      save_trajectory(pos,vel,force,TotEn,Temp,P,filename);
+      save_trajectory(pos,vel,force,TotEn,Temp,P,filename);*/
+
+      count = count + 1;
     }
 
   }
@@ -424,7 +455,7 @@ double calc_LJforce( double r[3], double pos[3] ) /* Subroutine to get Lennard-J
 
 double apply_pbc( double r ) /* Subroutine to apply Periodic Boundary Conditions to a given set of coordinates */
 {
-  // A lot of crap in this comments, just previous versions until working one was achieved 
+  // A lot of crap in this comments, just previous versions until working one was achieved
   //r-=(int)( ( (r/LBOX<0)?-0.5:0.5) + r)*LBOX;
   //printf("%f\t",r);
   r = r - floor(r/LBOX + 0.5)*LBOX;
@@ -456,4 +487,15 @@ void save_trajectory( double pos[NP][3], double vel[NP][3], double force[NP][3],
     fprintf(fp, "%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\t%f\n", pos[i][0], pos[i][1], pos[i][2], vel[i][0], vel[i][1], vel[i][2], force[i][0], force[i][1], force[i][2], ener, temp, P);
   }
   fclose(fp);
+}
+
+
+
+double dot_product( double pos1[3], double pos2[3] ) /* Subroutine intended to get the scalar product between two 3D vectors */
+{
+  double dot;
+
+  dot = pos1[0]*pos2[0] + pos1[1]*pos2[1] + pos1[2]*pos2[2];
+
+  return dot;
 }
