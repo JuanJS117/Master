@@ -31,8 +31,9 @@ Autocorrelation Functions. Three transport coefficients are studied here:
        The true kinematic viscosity is visc_0. To get it, we need to fit the visc values obtained
        to the different k used to calculate GACF.
 
-In this work, we checked that the Einstein-Smoluchowski relation is accomplished for the calculations
-done. This sets this approach as a good one, as long as all results are consistent with evidence.
+In this work, we checked that the Einstein-Smoluchowski relation is accomplished for the
+calculations done. This sets this approach as a good one, as long as all results are consistent
+with evidence.
 
 
 FILES
@@ -40,12 +41,13 @@ FILES
 In this repository we will find:
 
 1. 'md_NVE.c' -> The main code. A program written in C which runs a Molecular Dynamics
-    simulation in NVE. To keep temperature constant around a fixed value, the initial coordinates
-    are read from a file containing an equilibrium Montecarlo configuration at the desired temperature.
-    If keeping temperature constant is not a must, an equally-spaced lattice of particles may also be
-    created. Also, the initial velocities are randomly distributed following a Boltzmann distribution
-    at the desired temperature. To obtain such uniformly distributed random values, the polar Box-Muller
-    algorithm is implemented. The position, velocity and force integration is done using the Velocity
+    simulation in NVE. To keep temperature constant around a fixed value, the initial
+    coordinates are read from a file containing an equilibrium Montecarlo configuration
+    at the desired temperature. If keeping temperature constant is not a must, an
+    equally-spaced lattice of particles may also be created. Also, the initial velocities
+    are randomly distributed following a Boltzmann distribution at the desired temperature.
+    To obtain such uniformly distributed random values, the polar Box-Muller algorithm is
+    implemented. The position, velocity and force integration is done using the Velocity
     Verlet algorithm. Each N (N = NSTEP/NSAMP) simulation steps, the program calculates
     the potential, kinetic and total energy, the system temperature and pressure, and the
     velocity, force, and momentum field autocorrelation functions. It also prints the current
