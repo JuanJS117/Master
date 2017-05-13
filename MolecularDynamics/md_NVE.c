@@ -19,13 +19,16 @@ static const double LBOX = 7.368063;          // Box size --> Always set LBOX to
 static const double VOLBOX = 400.0;           // Box volume --> If working with NP = 200 and density = 0.5
 //static const int NP = 500;                  // Number of particles --> Always set NP = 500, in order to reach a density of 0.5 with LBOX = 10*SIGMA
 static const int NP = 200;                    // Number of particles --> Always set NP = 200, in order to reach a density of 0.5 with LBOX = 7.36*SIGMA
-static const double T = 2.0;                  // Temperature --> To be reached by Langevin thermostat (This value ensures a T = 2.0)
+static const double T = 0.5;                  // Temperature --> To be reached by Langevin thermostat (This value ensures a T = 2.0)
 static const double dt = 0.001;               // Time step (fs)
 static const double NSTEP = 100000.0;           // Number of steps --> For a simulation of 1 ps, use NSTEP = 1000000
-static const double NSAMP = 10000.0;            // Number of steps after which we store an image of the system --> Usually NSAMP = NSTEP/100
+static const double NSAMP = 50000.0;            // Number of steps after which we store an image of the system --> Usually NSAMP = NSTEP/100
 static const double CUTOFF = 1.0*2.5;         // Lennard-Jones potential cutoff --> Always set it to be 2.5*SIGMA
 static const double UCUT = -0.01631689;       // Lennard-Jones potential at the cutoff distance --> Needed for truncated Lennard-Jones potential
 static const double FCUT = -0.01559979;       // Lennard-Jones force at the cutoff distance --> Needed for truncated Lennard-Jones force
+static const double NVAF = 50.0;             // Number of VAFs to be calculated in order to promediate the system true VAF
+static const double NFAF = 100.0;             // Number of FAFs to be calculated in order to promediate the system true FAF
+static const double NGAF = 100.0;             // Number of GAFs to be calculated in order to promediate the system true GAF
 static const double PI = 3.14159265359;
 
 /* -------------------------------------------------------------------------- */
@@ -59,6 +62,7 @@ void main()
   double vel[NP][3];
   double vel0[NP][3];
   double force0[NP][3];
+  double pos0[NP][3];
   double v_half[NP][3];
   double force[NP][3];
   double force_next[NP][3];
@@ -67,11 +71,36 @@ void main()
   double MomX, MomY, MomZ;
   double Temp;
   double P;
-  double C_i[(int)NSAMP];   // VAC (Velocity Autocorrelation function)
-  double Diff_coef = 0.0;   // Diffussion coefficient
-  double FAC[(int)NSAMP];   // FAC (Force Autocorrelation funtion)
-  double Fric_coef = 0.0;   // Friction coefficient
+  //double C_i[(int)NSAMP];   // VAC (Velocity Autocorrelation function)
+  //double Diff_coef = 0.0;   // Diffussion coefficient
+  //double FAC[(int)NSAMP];   // FAC (Force Autocorrelation funtion)
+  //double Fric_coef = 0.0;   // Friction coefficient
   int count = 0;            // To calculate integrals derived from VAC
+
+  // VELOCITY AUTOCORRELATION FUNCTION
+  int vaf_step = 0;        // Number of time steps per VAF calculated
+  int nvaf = 0;     // Number of VAFs to be calculated
+  double vaf[(int)NVAF][(int)(NSAMP/NVAF)]; // Velocity Autocorrelation Function (all calculated)
+  double VAF[(int)(NSAMP/NVAF)]; //Velocity Autocorrelation Function (promediated)
+
+  // FORCE AUTOCORRELATION FUNCTION
+  int faf_step = 0;        // Number of time steps per FAF calculated
+  int nfaf = 0;     // Number of FAFs to be calculated
+  double faf[(int)NFAF][(int)(NSAMP/NFAF)]; // Force Autocorrelation Function (all calculated)
+  double FAF[(int)(NSAMP/NFAF)]; // Force Autocorrelation Function (promediated)
+
+  // MOMEMTUM FIELD AUTOCORRELATION FUNCTION
+  int gaf_step = 0;
+  int ngaf = 0;
+  double gaf[(int)NGAF][(int)(NSAMP/NGAF)];
+  double GAF[(int)(NSAMP/NGAF)];
+
+  double coskpos[3];
+  double coskpos0[3];
+  double sinkpos[3];
+  double sinkpos0[3];
+
+
 
   srandom(time(NULL));
   // srandom(123456);
@@ -164,7 +193,7 @@ void main()
 
   /* 2 --> MOLECULAR DYNAMICS SIMULATION */
 
-  printf("Simulation_Percentage\tIteration\tTime\tTotEn\tPotEn\tKinEn\tTemperature\tPressure\tMomentumX\tMomentumY\tMomentumZ\tVAC\tDiffusion_coef\tFriction_coef\n");
+  printf("Simulation_Percentage\tIteration\tTime\tTotEn\tPotEn\tKinEn\tTemperature\tPressure\tMomentumX\tMomentumY\tMomentumZ\n");
 
   for (int iter = 0; iter < NSTEP; iter++){
 
@@ -218,6 +247,49 @@ void main()
     double print_iter = floor(NSTEP/NSAMP);
     if (iter % (int)print_iter == 0){
 
+      double K = 2.0*PI*2.0/LBOX;
+      //double K1 = 2.0*PI*2.0/LBOX;
+      //double K2 = 2.0*PI*4.0/LBOX;
+      //double K3 = 2.0*PI*6.0/LBOX;
+
+      if (vaf_step == (int)(NSAMP/NVAF)){   // If we get a vaf step higher than the last one
+        nvaf = nvaf + 1;                    // We start calculating another VAF
+        vaf_step = 0;                       // And we reinitialize the vaf step count
+        for (int i = 0; i < NP; i++){       // Also, we store a new initial velocity
+          for (int dim = 0; dim < 3; dim++){
+            vel0[i][dim] = vel[i][dim];
+          }
+        }
+      }
+
+      if (faf_step == (int)(NSAMP/NFAF)){   // If we get a vaf step higher than the last one
+        nfaf = nfaf + 1;                    // We start calculating another FAF
+        faf_step = 0;                       // And we reinitialize the vaf step count
+        for (int i = 0; i < NP; i++){       // Also, we store a new initial force
+          for (int dim = 0; dim < 3; dim++){
+            force0[i][dim] = force[i][dim];
+          }
+        }
+      }
+
+      if (gaf_step == (int)(NSAMP/NGAF)){   // If we get a vaf step higher than the last one
+        ngaf = ngaf + 1;                    // We start calculating another FAF
+        gaf_step = 0;                       // And we reinitialize the vaf step count
+        for (int i = 0; i < NP; i++){
+          for (int dim = 0; dim < 3; dim++){
+            pos0[i][dim] = pos[i][dim];     // We store a new initial position
+            //g0[i][dim] = 0.0;               // Also, we reinitialize g_k(0)
+            //g[i][dim] = 0.0;
+          }
+        }
+        // for (int i = 0; i < NP; i++){       // And we give each g_k(0) its corresponding value
+        //   for (int dim = 0; dim < 3; dim++){
+        //     g0[i][dim] = g0[i][dim] + (1.0/NP)*cos(K*pos[i[dim]])*cos(K*pos[i[dim]]);
+        //   }
+        // }
+      }
+
+
       TotEn = 0.0;
       KinEn = 0.0;
       PotEn = 0.0;
@@ -229,8 +301,12 @@ void main()
       Temp = 0.0;
       P = 0.0;
 
-      C_i[count] = 0.0;
-      FAC[count] = 0.0;
+
+      //C_i[count] = 0.0; DEPRECATED
+      //FAC[count] = 0.0; DEPRECATED
+      vaf[nvaf][vaf_step] = 0.0;
+      faf[nfaf][faf_step] = 0.0;
+      gaf[ngaf][gaf_step] = 0.0;
 
       for (int i = 0; i < NP; i++){
         KinEn = KinEn + 0.5*(vel[i][0]*vel[i][0] + vel[i][1]*vel[i][1] + vel[i][2]*vel[i][2] );
@@ -243,8 +319,25 @@ void main()
         //P = P - (1.0/3.0)*norm(pos[i])*norm(force[i]);
         P = P - (1.0/3.0)*dot_product(pos[i],force[i]);
 
-        C_i[count] = C_i[count] + dot_product(vel0[i],vel[i]); // VAC
-        FAC[count] = FAC[count] + dot_product(force0[i],force[i]); // Force AutoCorrelation Coefficient
+        //C_i[count] = C_i[count] + dot_product(vel0[i],vel[i]); // VAC DEPRECATED
+        //FAC[count] = FAC[count] + dot_product(force0[i],force[i]); // Force AutoCorrelation Coefficient DEPRECATED
+        vaf[nvaf][vaf_step] = vaf[nvaf][vaf_step] + dot_product(vel0[i],vel[i]); // VAF
+        faf[nfaf][faf_step] = faf[nfaf][faf_step] + dot_product(force0[i],force[i]); // FAF
+
+
+        for (int dim = 0; dim < 3; dim++){
+          coskpos[dim] = 0.0;
+          coskpos0[dim] = 0.0;
+          sinkpos[dim] = 0.0;
+          sinkpos0[dim] = 0.0;
+        }
+        for (int dim = 0; dim < 3; dim++){
+          coskpos[dim] = coskpos[dim] + cos(K*pos[i][dim]);
+          coskpos0[dim] = coskpos0[dim] + cos(K*pos0[i][dim]);
+          sinkpos[dim] = sinkpos[dim] + sin(K*pos[i][dim]);
+          sinkpos0[dim] = sinkpos0[dim] + sin(K*pos0[i][dim]);
+        }
+        gaf[ngaf][gaf_step] = gaf[ngaf][gaf_step] + dot_product(coskpos,coskpos0) + dot_product(sinkpos,sinkpos0); // GAF
 
         for (int j = 0; j < NP; j++){
           if (i != j){
@@ -262,15 +355,19 @@ void main()
       Temp = Temp/(3.0*NP);
       P = P + Temp*NP;
       P = P / VOLBOX;
-      C_i[count] = C_i[count] / NP;
-      FAC[count] = FAC[count] / (NP*Temp);
+      //C_i[count] = C_i[count] / NP; // DEPRECATED
+      //FAC[count] = FAC[count] / (NP*Temp); DEPRECATED
+      vaf[nvaf][vaf_step] = vaf[nvaf][vaf_step] / NP;
+      faf[nfaf][faf_step] = faf[nfaf][faf_step] / (Temp*NP);
+      gaf[ngaf][gaf_step] = gaf[ngaf][gaf_step] / NP;
 
       // Diffusion coefficient
-      Diff_coef = Diff_coef + (1.0/3.0)*C_i[count]*dt;
+      // Diff_coef = Diff_coef + (1.0/3.0)*C_i[count]*dt; // DEPRECATED
+      // Diff_coef = Diff_coef + (1.0/3.0)*vaf[nvaf][vaf_step]*dt;
       // Friction coefficient
-      Fric_coef = Fric_coef + (1.0/3.0)*FAC[count]*dt;
+      // Fric_coef = Fric_coef + (1.0/3.0)*FAC[count]*dt;
 
-      printf("%.2lf%%\t%i\t%lf\t%lf\t%lf\t%lf\t%lf\t%f\t%.14lf\t%.14lf\t%.14lf\t%f\t%f\t%f\n",(iter/NSTEP)*100.0,iter,dt*(double)iter,TotEn,PotEn,KinEn,Temp,P,MomX,MomY,MomZ,C_i[count],Diff_coef,Fric_coef);
+      printf("%.2lf%%\t%i\t%lf\t%lf\t%lf\t%lf\t%lf\t%f\t%.14lf\t%.14lf\t%.14lf\n",(iter/NSTEP)*100.0,iter,dt*(double)iter,TotEn,PotEn,KinEn,Temp,P,MomX,MomY,MomZ);
 
       // Uncomment code below only if a verbose output is desired
       // printf("Simulation status: %f %%\t...\t%1.12f fs\n", (100.0*iter/NSTEP),dt*iter);
@@ -286,9 +383,74 @@ void main()
       save_trajectory(pos,vel,force,TotEn,Temp,P,filename);*/
 
       count = count + 1;
+      vaf_step = vaf_step + 1;
+      faf_step = faf_step + 1;
+      gaf_step = gaf_step + 1;
     }
 
   }
+
+  // We need to promediate all VAFs
+  for (int i = 0; i < (int)(NSAMP/NVAF); i++){
+    VAF[i] = 0.0;
+    for (int j = 0; j < NVAF; j++){
+      VAF[i] = VAF[i] + vaf[j][i];
+    }
+    VAF[i] = VAF[i]/NVAF;
+  }
+
+  // We need to promediate all FAFs
+  for (int i = 0; i < (int)(NSAMP/NFAF); i++){
+    FAF[i] = 0.0;
+    for (int j = 0; j < NVAF; j++){
+      FAF[i] = FAF[i] + faf[j][i];
+    }
+    FAF[i] = FAF[i]/NFAF;
+  }
+
+  // We need to promediate all GAFs
+  for (int i = 0; i < (int)(NSAMP/NGAF); i++){
+    GAF[i] = 0.0;
+    for (int j = 0; j < NGAF; j++){
+      GAF[i] = GAF[i] + gaf[j][i];
+    }
+    GAF[i] = GAF[i]/NGAF;
+  }
+
+  double Diff_coef[(int)(NSAMP/NVAF)];
+  Diff_coef[0] = 0.0;
+  for (int i = 1; i < (int)(NSAMP/NVAF); i++){
+    Diff_coef[i] = Diff_coef[i-1] + (1.0/3.0)*VAF[i]*dt;
+  }
+
+  double Fric_coef[(int)(NSAMP/NFAF)];
+  Fric_coef[0] = 0.0;
+  for (int i = 1; i < (int)(NSAMP/NFAF); i++){
+    Fric_coef[i] = Fric_coef[i-1] + (1.0/3.0)*FAF[i]*dt;
+  }
+
+  FILE *fp;
+  fp = fopen("VAF1.txt","w+");
+  fprintf(fp,"VAF\tDiff_coef\n");
+  for (int i = 0; i < (int)(NSAMP/NVAF); i++){
+    fprintf(fp,"%lf\t%lf\n",VAF[i],Diff_coef[i]);
+  }
+  fclose(fp);
+
+  fp = fopen("FAF1.txt","w+");
+  fprintf(fp,"FAF\tFric_coef\n");
+  for (int i = 0; i < (int)(NSAMP/NFAF); i++){
+    fprintf(fp,"%lf\t%lf\n",FAF[i],Fric_coef[i]);
+  }
+  fclose(fp);
+
+  fp = fopen("GAF1.txt","w+");
+  fprintf(fp,"GAF\n");
+  for (int i = 0; i < (int)(NSAMP/NGAF); i++){
+    fprintf(fp,"%lf\n",GAF[i]);
+  }
+  fclose(fp);
+
 
 }
 
@@ -422,6 +584,7 @@ double calc_LJpot( double r[3], double pos[3] ) /* Subroutine to get Lennard-Jon
 
   if (dist < CUTOFF){
     //LJpot = 4.0 * EPSILON * ( pow(SIGMA/dist,12) - pow(SIGMA/dist,6) );
+    //LJpot = 4.0 * EPSILON * ( 1.0/dist12 - 1.0/dist6 );
     LJpot = 4.0 * EPSILON * ( 1.0/dist12 - 1.0/dist6 ) - UCUT;
   } else {
     LJpot = 0.0;
@@ -445,6 +608,7 @@ double calc_LJforce( double r[3], double pos[3] ) /* Subroutine to get Lennard-J
     //LJforce = - 24.0 * EPSILON * ( 2.0*(pow(SIGMA,12)/pow(dist,14)) - (pow(SIGMA,6)/pow(dist,8)) );
     // CLARIFICATION --> Minus sign before LJforce is required, as it is the way to grant that we are calculating the force exerted by other particle over OUR particle
     // Otherwise, we get the force OUR particle does over another particle, thus leading to opposite Newton laws, progressive approachment, and collisions between particles.
+    //LJforce = -24.0 * EPSILON * ( 2.0/dist12 - 1.0/dist6 ) / dist2;
     LJforce = -24.0 * EPSILON * ( 2.0/dist12 - 1.0/dist6 ) / dist2 - FCUT;
   } else {
     LJforce = 0.0;
